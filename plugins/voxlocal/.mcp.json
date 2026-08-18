@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "voxlocal": {
+      "title": "VoxLocal",
+      "description": "Generate private local speech from text and documents on macOS.",
+      "cwd": ".",
+      "command": "node",
+      "args": ["./mcp/server.cjs"]
+    }
+  }
+}

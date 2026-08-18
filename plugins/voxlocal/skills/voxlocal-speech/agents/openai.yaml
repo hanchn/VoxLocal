@@ -1,0 +1,4 @@
+interface:
+  display_name: "VoxLocal Speech"
+  short_description: "Turn generated text and documents into local speech"
+  default_prompt: "Use $voxlocal-speech to turn this document into local audio."

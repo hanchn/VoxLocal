@@ -1,0 +1,23 @@
+{
+  "name": "voxlocal",
+  "version": "0.1.0+codex.20260818060128",
+  "description": "Turn generated text and local documents into private on-device speech.",
+  "author": {
+    "name": "VoxLocal"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "VoxLocal",
+    "shortDescription": "Generate speech from text and documents locally.",
+    "longDescription": "VoxLocal lets Codex turn generated text or local documents into private on-device audio using selectable voices.",
+    "developerName": "VoxLocal",
+    "category": "Productivity",
+    "capabilities": [
+      "Local text-to-speech",
+      "Document narration",
+      "Voice selection"
+    ],
+    "defaultPrompt": "Turn this text or document into local audio with VoxLocal."
+  },
+  "mcpServers": "./.mcp.json"
+}

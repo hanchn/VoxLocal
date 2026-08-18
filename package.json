@@ -1,0 +1,41 @@
+{
+  "name": "voxlocal",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:mcp": "esbuild plugins/voxlocal/mcp/server.ts --bundle --platform=node --format=cjs --outfile=plugins/voxlocal/mcp/server.cjs",
+    "check:plugin": "npm run build:mcp && python3 /Users/yuanjing/.codex/skills/.system/skill-creator/scripts/quick_validate.py plugins/voxlocal/skills/voxlocal-speech && python3 /Users/yuanjing/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py plugins/voxlocal",
+    "test:mcp": "node scripts/test-mcp.mjs",
+    "test:mcp:clone": "node scripts/test-mcp-clone.mjs",
+    "test:clone-voices": "node scripts/test-clone-voices.mjs",
+    "test:open-voice": "node scripts/test-open-voice.mjs",
+    "test:kokoro-voice": "node scripts/test-kokoro-voice.mjs",
+    "warm:voice-cache": "node scripts/warm-voice-cache.mjs",
+    "resources": "node scripts/resources.mjs",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "@tauri-apps/api": "^2.8.0",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.12.1",
+    "pdfjs-dist": "^5.6.205",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "esbuild": "^0.25.9",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5",
+    "zod": "^3.25.76"
+  }
+}
