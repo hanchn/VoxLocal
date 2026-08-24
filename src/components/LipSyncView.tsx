@@ -102,7 +102,7 @@ export function LipSyncView({ audioJobs, onNotice }: Props) {
       }
       if (job.status === "failed") throw new Error(job.error || "视频生成失败");
       onNotice("视频已生成并保存在本机");
-    } catch (error) { onNotice(error instanceof Error ? error.message : "视频生成失败"); }
+    } catch (error) { onNotice(error instanceof Error ? error.message : typeof error === "string" ? error : "视频生成失败"); }
   }
 
   async function play(job: VideoJob) {
@@ -119,7 +119,7 @@ export function LipSyncView({ audioJobs, onNotice }: Props) {
     if (!job) return;
     setPendingDelete(null);
     try { await deleteVideoJob(job.id); if (playingUrl && job.outputPath) { URL.revokeObjectURL(playingUrl); setPlayingUrl(null); } setJobs((items) => items.filter((item) => item.id !== job.id)); if (currentJob?.id === job.id) setCurrentJob(null); onNotice("视频记录已删除"); }
-    catch (error) { onNotice(error instanceof Error ? error.message : "视频删除失败"); }
+    catch (error) { onNotice(error instanceof Error ? error.message : typeof error === "string" ? error : "视频删除失败"); }
   }
 
   const audioReady = audioSource === "history" ? !!selectedAudio?.outputPath : !!importedAudio?.path;
