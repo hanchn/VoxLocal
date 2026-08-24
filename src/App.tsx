@@ -31,6 +31,7 @@ import { optimizeVoiceRecording } from "./lib/audioProcessing";
 import { importDocument } from "./lib/documentImport";
 import { cacheVoicePreview, cancelSynthesis, downloadPublicVoice, getDeviceProfile, getEngineStatus, getPublicVoiceAvailability, getSynthesisJob, listPersistedVoiceProfiles, listSynthesisJobs, listTrashedAudioJobs, listTrashVoiceProfiles, prepareEngine, purgeAudioTrash, purgeVoiceTrash, persistRecording, persistVoiceProfile, readCachedVoicePreview, readGeneratedAudio, renameGeneratedAudio, restoreTrashedAudio, restoreVoiceProfile, revealGeneratedAudio, startSynthesis, trashGeneratedAudio, trashVoiceProfile, type DeviceProfile, type EngineStatus, type SynthesisJob } from "./lib/synthesis";
 import { LipSyncView } from "./components/LipSyncView";
+import { PptVideoView } from "./components/PptVideoView";
 import type { DocumentRecord, View, VoiceProfile } from "./types";
 
 const primaryPublicVoices: VoiceProfile[] = [
@@ -103,6 +104,10 @@ function randomRecordingPrompt(current?: string) {
   return candidates[Math.floor(Math.random() * candidates.length)] ?? recordingPrompts[0];
 }
 
+function detectDocumentLanguage(text: string, declared?: DocumentRecord["language"]): "zh" | "en" | "ja" | "other" {
+  return declared ?? (/[぀-ヿ]/.test(text) ? "ja" : /[\u3400-\u9fff]/.test(text) ? "zh" : /[A-Za-z]/.test(text) ? "en" : "other");
+}
+
 function App() {
   const [view, setView] = useState<View>("reader");
   const [voiceOrder, setVoiceOrder] = useState<string[]>(loadVoiceOrder);
@@ -121,6 +126,7 @@ function App() {
   const [text, setText] = useState(sampleText);
   const [documentTitle, setDocumentTitle] = useState("未命名文档");
   const [rate, setRate] = useState(1);
+  const [speechLanguage, setSpeechLanguage] = useState<"zh" | "en" | "ja">("zh");
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [progress, setProgress] = useState(0);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -137,6 +143,16 @@ function App() {
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const generatedPlayerRef = useRef<HTMLAudioElement | null>(null);
   const autoplayGeneratedRef = useRef(false);
+
+  function changeSpeechLanguage(language: "zh" | "en" | "ja") {
+    if (language === speechLanguage) return;
+    if (generatedAudioUrl) URL.revokeObjectURL(generatedAudioUrl);
+    setGeneratedAudioUrl(null);
+    setSynthesisJob(null);
+    setProgress(0);
+    setSpeechLanguage(language);
+    setNotice(language === "en" ? "已切换为 English，请重新生成语音" : language === "ja" ? "已切换为 日本語，请重新生成语音" : "已切换为中文，请重新生成语音");
+  }
 
   async function refreshAppState(showNotice = true) {
     if (isRefreshing) return;
@@ -177,6 +193,7 @@ function App() {
   useEffect(() => {
     const audio = generatedPlayerRef.current;
     if (!audio) return;
+    audio.playbackRate = rate;
     const playing = () => setIsSpeaking(true);
     const stopped = () => setIsSpeaking(false);
     const updatePlaybackProgress = () => { if (audio.duration) setProgress((audio.currentTime / audio.duration) * 100); };
@@ -194,7 +211,7 @@ function App() {
       audio.removeEventListener("ended", stopped);
       audio.removeEventListener("timeupdate", updatePlaybackProgress);
     };
-  }, [generatedAudioUrl]);
+  }, [generatedAudioUrl, rate]);
 
   useEffect(() => {
     if (!allVoices.some((voice) => voice.id === selectedVoiceId)) {
@@ -226,6 +243,7 @@ function App() {
     }
     if (selectedVoice.kind !== "system") {
       if (generatedAudioUrl && generatedPlayerRef.current) {
+        generatedPlayerRef.current.playbackRate = rate;
         await generatedPlayerRef.current.play();
         setIsSpeaking(true);
       } else if (synthesisJob?.status === "completed" && synthesisJob.outputPath && synthesisJob.voiceId === selectedVoice.id) {
@@ -243,7 +261,7 @@ function App() {
     setIsSpeaking(true);
     setProgress((value) => Math.max(value, 4));
     try {
-      await speakWithSystemVoice(text, selectedVoice.id, rate, (charIndex) => {
+      await speakWithSystemVoice(text, selectedVoice.id, rate, speechLanguage, (charIndex) => {
         setProgress(Math.min(100, (charIndex / Math.max(text.length, 1)) * 100));
       });
       setIsSpeaking(false);
@@ -261,7 +279,9 @@ function App() {
       const imported = await importDocument(file);
       setText(imported.text);
       setDocumentTitle(imported.name);
-      const document: DocumentRecord = { id: `document-${Date.now()}`, title: imported.name, type: imported.type, text: imported.text, createdAt: new Date().toISOString() };
+      const detectedLanguage = detectDocumentLanguage(imported.text);
+      const document: DocumentRecord = { id: `document-${Date.now()}`, title: imported.name, type: imported.type, text: imported.text, language: detectedLanguage, createdAt: new Date().toISOString() };
+      if (detectedLanguage === "zh" || detectedLanguage === "en" || detectedLanguage === "ja") setSpeechLanguage(detectedLanguage);
       await saveDocument(document);
       setDocuments((current) => [document, ...current]);
       setProgress(0);
@@ -275,7 +295,8 @@ function App() {
   }
 
   async function createDocument(title: string, content: string, language: DocumentRecord["language"]) {
-    const document: DocumentRecord = { id: `document-${Date.now()}`, title: title.trim() || "未命名文档", type: "text", text: content, language, createdAt: new Date().toISOString() };
+    const detected = detectDocumentLanguage(content, language);
+    const document: DocumentRecord = { id: `document-${Date.now()}`, title: title.trim() || "未命名文档", type: "text", text: content, language: detected, createdAt: new Date().toISOString() };
     await saveDocument(document);
     setDocuments((current) => [document, ...current]);
     setNotice(`已创建“${document.title}”`);
@@ -284,6 +305,8 @@ function App() {
   function openDocument(document: DocumentRecord) {
     setDocumentTitle(document.title);
     setText(document.text);
+    const language = detectDocumentLanguage(document.text, document.language);
+    if (language === "zh" || language === "en" || language === "ja") setSpeechLanguage(language);
     setProgress(0);
     setSynthesisJob(null);
     setView("reader");
@@ -309,7 +332,7 @@ function App() {
       }
       if (generatedAudioUrl) URL.revokeObjectURL(generatedAudioUrl);
       setGeneratedAudioUrl(null);
-      const started = await startSynthesis({ text, title: documentTitle, voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, language: selectedVoice.language });
+      const started = await startSynthesis({ text, title: documentTitle, voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, language: speechLanguage === "en" ? "English" : speechLanguage === "ja" ? "Japanese" : "Chinese" });
       setSynthesisJob(started);
       setSynthesisJobs((jobs) => [started, ...jobs.filter((job) => job.id !== started.id)]);
       let current = started;
@@ -481,6 +504,7 @@ function App() {
           <NavButton active={view === "library"} icon={<Library size={18} />} label="文档库" onClick={() => setView("library")} />
           <NavButton active={view === "history"} icon={<History size={18} />} label="生成历史" onClick={() => setView("history")} />
           <NavButton active={view === "video"} icon={<Film size={18} />} label="口型视频" onClick={() => setView("video")} />
+          <NavButton active={view === "ppt"} icon={<Film size={18} />} label="PPT视频" onClick={() => setView("ppt")} />
           <NavButton active={view === "trash"} icon={<Trash2 size={18} />} label={`回收站${trashedVoices.length + trashedAudioJobs.length ? ` (${trashedVoices.length + trashedAudioJobs.length})` : ""}`} onClick={() => setView("trash")} />
         </nav>
         <button className="refresh-app-button" disabled={isRefreshing} onClick={() => void refreshAppState()}><RefreshCw className={isRefreshing ? "spin" : ""} size={16} /><span>{isRefreshing ? "正在刷新" : "刷新状态"}</span></button>
@@ -492,7 +516,7 @@ function App() {
           <Reader
             text={text} setText={setText} selectedVoice={selectedVoice} allVoices={allVoices}
             menuOpen={menuOpen} setMenuOpen={setMenuOpen} chooseVoice={chooseVoice}
-            isSpeaking={isSpeaking} toggleSpeech={toggleSpeech} rate={rate} setRate={setRate}
+            isSpeaking={isSpeaking} toggleSpeech={toggleSpeech} rate={rate} setRate={setRate} language={speechLanguage} setLanguage={changeSpeechLanguage}
             progress={progress} onRecord={() => setView("record")}
             documentTitle={documentTitle} onImport={() => importInputRef.current?.click()}
             synthesisJob={synthesisJob} generatedAudioUrl={generatedAudioUrl}
@@ -508,6 +532,7 @@ function App() {
         {view === "library" && <LibraryView documents={[...documents, ...sampleDocuments]} onOpen={openDocument} onDiscard={discardDocument} onImport={() => importInputRef.current?.click()} onCreate={createDocument} />}
         {view === "history" && <HistoryView jobs={synthesisJobs} voices={allVoices} onReveal={showInFinder} onRename={renameHistoryAudio} onTrash={trashHistoryAudio} />}
         {view === "video" && <LipSyncView audioJobs={synthesisJobs} onNotice={setNotice} />}
+        {view === "ppt" && <PptVideoView audioJobs={synthesisJobs} onNotice={setNotice} />}
         {view === "trash" && <TrashView voices={trashedVoices} audioJobs={trashedAudioJobs} onRestoreVoice={restoreTrashedVoice} onRestoreAudio={restoreHistoryAudio} onEmpty={emptyTrash} />}
       </main>
 
@@ -533,6 +558,8 @@ interface ReaderProps {
   toggleSpeech: () => void;
   rate: number;
   setRate: (rate: number) => void;
+  language: "zh" | "en" | "ja";
+  setLanguage: (language: "zh" | "en" | "ja") => void;
   progress: number;
   onRecord: () => void;
   documentTitle: string;
@@ -551,6 +578,10 @@ interface ReaderProps {
 function Reader(props: ReaderProps) {
   const system = props.allVoices.filter((voice) => voice.kind !== "user" && voice.status === "ready");
   const users = props.allVoices.filter((voice) => voice.kind === "user");
+  const [showMoreRates, setShowMoreRates] = useState(false);
+  const commonRates = [0.8, 0.9, 1, 1.1, 1.2, 1.3];
+  const extraRates = [1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2];
+  const visibleRates = showMoreRates ? [...commonRates, ...extraRates] : commonRates;
   return (
     <section className="page reader-page">
       <header className="page-header">
@@ -579,7 +610,8 @@ function Reader(props: ReaderProps) {
             )}
           </div>
 
-          <div className="setting-row"><span><Settings2 size={16} />语速</span><div className="rate-buttons">{[0.8, 1, 1.2].map((value) => <button key={value} className={props.rate === value ? "active" : ""} onClick={() => props.setRate(value)}>{value}×</button>)}</div></div>
+          <div className="setting-row"><span>语音语言</span><select value={props.language} onChange={(event) => props.setLanguage(event.target.value as "zh" | "en" | "ja")}><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option></select></div>
+          <div className="setting-row"><span><Settings2 size={16} />语速</span><div className="rate-buttons">{visibleRates.map((value) => <button key={value} className={props.rate === value ? "active" : ""} onClick={() => props.setRate(value)}>{value.toFixed(1)}×</button>)}<button className="rate-more" onClick={() => setShowMoreRates((open) => !open)} aria-expanded={showMoreRates}>{showMoreRates ? "收起" : "更多"}</button></div></div>
           <div className="engine-card"><Cpu size={18} /><div><strong>{props.selectedVoice.kind === "user" ? "Qwen3-TTS 克隆引擎" : props.selectedVoice.id.startsWith("kokoro-") ? "Kokoro 开源音色" : props.selectedVoice.kind === "open" ? "Qwen3-TTS 开源音色" : "Mac 公共音色"}</strong><small>{props.device ? `${props.device.memoryGb}GB · ${props.device.performanceTier === "quality" ? "质量模式" : props.device.performanceTier === "balanced" ? "均衡模式" : "轻量模式"} · ${props.device.chunkCharacters}字/片` : "正在检测设备…"}</small></div><span className="local-badge" title={props.engine?.message}>{props.selectedVoice.kind !== "system" && !props.engine?.ready ? "组件待安装" : "本地"}</span></div>
 
           <button className="generate-button" disabled={!props.text.trim() || props.synthesisJob?.status === "running" || props.synthesisJob?.status === "queued"} onClick={props.onGenerate}><Download size={17} />{props.synthesisJob?.status === "running" || props.synthesisJob?.status === "queued" ? props.synthesisJob.stage : "生成完整音频"}</button>
@@ -942,13 +974,12 @@ function LibraryView({ documents, onOpen, onDiscard, onImport, onCreate }: { doc
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newText, setNewText] = useState("");
-  const [newLanguage, setNewLanguage] = useState<DocumentRecord["language"]>("zh");
   const detectLanguage = (document: DocumentRecord) => document.language ?? (/[぀-ヿ]/.test(document.text) ? "ja" : /[\u3400-\u9fff]/.test(document.text) ? "zh" : /[A-Za-z]/.test(document.text) ? "en" : "other");
   const visible = documents.filter((document) => (language === "all" || detectLanguage(document) === language) && (length === "all" || (length === "long" ? document.text.length >= 300 : document.text.length < 300)));
 
   async function saveNewDocument() {
     if (!newText.trim()) return;
-    await onCreate(newTitle, newText.trim(), newLanguage);
+    await onCreate(newTitle, newText.trim(), undefined);
     setCreating(false);
     setNewTitle("");
     setNewText("");
@@ -957,7 +988,7 @@ function LibraryView({ documents, onOpen, onDiscard, onImport, onCreate }: { doc
   return <section className="page library-page">
     <header className="page-header"><div><p className="eyebrow">本地内容</p><h1>文档库</h1><p className="subtitle">文档文本只保存在这台设备。</p></div><div className="library-header-actions"><button className="secondary-button" onClick={() => setCreating(true)}><Plus size={17} />新建文档</button><button className="primary-button" onClick={onImport}><Plus size={17} />导入文档</button></div></header>
     <div className="library-filters"><div className="voice-tabs">{([['all','全部语言'],['zh','中文'],['en','英文'],['ja','日文']] as const).map(([id, label]) => <button key={id} className={language === id ? "active" : ""} onClick={() => setLanguage(id)}>{label}</button>)}</div><div className="voice-tabs">{([['all','全部篇幅'],['short','短文本'],['long','长文本']] as const).map(([id, label]) => <button key={id} className={length === id ? "active" : ""} onClick={() => setLength(id)}>{label}</button>)}</div></div>
-    {creating && <div className="create-document-card"><div className="create-document-row"><input placeholder="文档标题" value={newTitle} onChange={(event) => setNewTitle(event.target.value)} /><select value={newLanguage} onChange={(event) => setNewLanguage(event.target.value as DocumentRecord["language"])}><option value="zh">中文</option><option value="en">英文</option><option value="ja">日文</option><option value="other">其他</option></select></div><textarea autoFocus placeholder="在这里输入需要阅读的内容…" value={newText} onChange={(event) => setNewText(event.target.value)} /><div><small>{newText.length.toLocaleString()} 字</small><button onClick={() => setCreating(false)}>取消</button><button className="primary-button" disabled={!newText.trim()} onClick={() => void saveNewDocument()}>保存文档</button></div></div>}
+    {creating && <div className="create-document-card"><div className="create-document-row"><input placeholder="文档标题" value={newTitle} onChange={(event) => setNewTitle(event.target.value)} /><small className="document-language-auto">语言将根据文案自动识别</small></div><textarea autoFocus placeholder="在这里输入需要阅读的内容…" value={newText} onChange={(event) => setNewText(event.target.value)} /><div><small>{newText.length.toLocaleString()} 字</small><button onClick={() => setCreating(false)}>取消</button><button className="primary-button" disabled={!newText.trim()} onClick={() => void saveNewDocument()}>保存文档</button></div></div>}
     {visible.length ? <div className="document-library-grid">{visible.map((document) => <article key={document.id} className="document-library-card"><span className="document-icon"><FileText size={20} /></span><div><h2>{document.title}{document.isSample && <span className="sample-badge">示例</span>}</h2><p>{detectLanguage(document) === "zh" ? "中文" : detectLanguage(document) === "en" ? "英文" : detectLanguage(document) === "ja" ? "日文" : "其他"} · {document.text.length >= 300 ? "长文本" : "短文本"} · {document.text.length.toLocaleString()} 字</p></div><button onClick={() => onOpen(document)}>打开阅读</button>{!document.isSample && <button className="document-delete" aria-label={`删除 ${document.title}`} onClick={() => onDiscard(document)}><Trash2 size={15} /></button>}</article>)}</div> : <div className="library-empty"><div className="empty-illustration"><FileText size={34} /></div><h2>没有符合条件的文档</h2><p>请切换语言或篇幅筛选。</p></div>}
   </section>;
 }

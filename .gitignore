@@ -3,6 +3,7 @@ dist
 .DS_Store
 src-tauri/target
 *.log
+test-output/
 .env
 .env.local
 __pycache__/

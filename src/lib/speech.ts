@@ -6,6 +6,11 @@ const voiceHints: Record<string, string[]> = {
   clear: ["Tingting", "Chinese", "Mandarin"],
   bright: ["Meijia", "Sinji", "Chinese"],
 };
+const languageConfig: Record<string, { locale: string; hints: string[] }> = {
+  zh: { locale: "zh-CN", hints: ["Tingting", "Meijia", "Sinji", "Chinese"] },
+  en: { locale: "en-US", hints: ["Samantha", "Alex", "Ava", "English"] },
+  ja: { locale: "ja-JP", hints: ["Kyoko", "Otoya", "Japanese"] },
+};
 
 function isTauriRuntime(): boolean {
   return typeof (window as Window & { __TAURI_INTERNALS__?: { invoke?: unknown } }).__TAURI_INTERNALS__?.invoke === "function";
@@ -15,6 +20,7 @@ export async function speakWithSystemVoice(
   text: string,
   profileId: string,
   rate: number,
+  language = "zh",
   onBoundary?: (charIndex: number) => void,
 ): Promise<void> {
   if (isTauriRuntime()) {
@@ -22,6 +28,7 @@ export async function speakWithSystemVoice(
       text,
       voiceId: profileId,
       wordsPerMinute: Math.round(180 * rate),
+      language,
     });
     onBoundary?.(text.length);
     return;
@@ -34,12 +41,13 @@ export async function speakWithSystemVoice(
   await new Promise<void>((resolve, reject) => {
     const utterance = new SpeechSynthesisUtterance(text);
     const voices = window.speechSynthesis.getVoices();
-    const hints = voiceHints[profileId] ?? voiceHints.warm;
+    const config = languageConfig[language] ?? languageConfig.zh;
+    const hints = config.hints.length ? config.hints : (voiceHints[profileId] ?? voiceHints.warm);
     utterance.voice =
       voices.find((voice) => hints.some((hint) => voice.name.includes(hint))) ??
-      voices.find((voice) => voice.lang.toLowerCase().startsWith("zh")) ??
+      voices.find((voice) => voice.lang.toLowerCase().startsWith(config.locale.slice(0, 2))) ??
       null;
-    utterance.lang = "zh-CN";
+    utterance.lang = config.locale;
     utterance.rate = rate;
     utterance.pitch = profileId === "bright" ? 1.08 : profileId === "calm" ? 0.92 : 1;
     utterance.onboundary = (event) => onBoundary?.(event.charIndex);
