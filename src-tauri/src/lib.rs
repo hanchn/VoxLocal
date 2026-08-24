@@ -16,6 +16,7 @@ struct SpeechState {
 
 struct JobState {
     cancellations: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    processes: Arc<Mutex<HashMap<String, u32>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -954,6 +955,7 @@ fn recover_interrupted_jobs() {
 #[tauri::command]
 fn cancel_synthesis_job(job_id: String, state: tauri::State<'_, JobState>) -> Result<(), String> {
     if let Some(flag) = state.cancellations.lock().map_err(|_| "任务状态不可用")?.get(&job_id) { flag.store(true, Ordering::Relaxed); }
+    if let Some(pid) = state.processes.lock().map_err(|_| "任务状态不可用")?.get(&job_id).copied() { let _ = Command::new("/bin/kill").arg("-TERM").arg(pid.to_string()).status(); }
     Ok(())
 }
 
@@ -1193,7 +1195,7 @@ fn start_ppt_video_job(request: PptVideoRequest) -> Result<VideoJob, String> {
     Ok(job)
 }
 
-fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio: PathBuf, output: PathBuf, cancellation: Arc<AtomicBool>) {
+fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio: PathBuf, output: PathBuf, cancellation: Arc<AtomicBool>, processes: Arc<Mutex<HashMap<String, u32>>>) {
     let result = (|| -> Result<(), String> {
         if cancellation.load(Ordering::Relaxed) { return Err("__cancelled__".into()); }
         update_video_job(&job_id, |job| { job.status = "running".into(); job.stage = "准备本地素材".into(); job.progress = 10; })?;
@@ -1216,6 +1218,7 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
             command.current_dir(&root).arg("inference.py").arg("--checkpoint_path").arg(checkpoint).arg("--face").arg(&portrait).arg("--audio").arg(&audio).arg("--outfile").arg(&output).arg("--fps").arg("25").stdout(Stdio::piped()).stderr(Stdio::piped());
             if let Some(parent) = ffmpeg.parent() { command.env("PATH", format!("{}:{}", parent.to_string_lossy(), std::env::var("PATH").unwrap_or_default())); }
             let mut child = command.spawn().map_err(|error| error.to_string())?;
+            if let Ok(mut active) = processes.lock() { active.insert(job_id.clone(), child.id()); }
             let stderr = child.stderr.take().ok_or("无法读取 Wav2Lip 进度")?;
             let mut stderr_text = String::new();
             let mut last_progress = 35u8;
@@ -1234,6 +1237,7 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
                 stderr_text.push('\n');
             }
             let status = child.wait().map_err(|error| error.to_string())?;
+            if let Ok(mut active) = processes.lock() { active.remove(&job_id); }
             Ok(std::process::Output { status, stdout: Vec::new(), stderr: stderr_text.into_bytes() })
         } else {
             let size = format!("{width}x{height}");
@@ -1277,6 +1281,7 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
         update_video_job(&job_id, |job| { job.status = "completed".into(); job.stage = "生成完成".into(); job.progress = 100; job.output_path = Some(output.to_string_lossy().into_owned()); })?;
         Ok(())
     })();
+    if let Ok(mut active) = processes.lock() { active.remove(&job_id); }
     if let Err(error) = result { let _ = fs::remove_file(&output); let _ = update_video_job(&job_id, |job| { if error == "__cancelled__" { job.status = "cancelled".into(); job.stage = "已取消".into(); job.progress = 0; } else { job.status = "failed".into(); job.stage = "生成失败".into(); job.error = Some(error); } }); }
 }
 
@@ -1296,7 +1301,8 @@ fn start_video_job(request: VideoRequest, state: tauri::State<'_, JobState>) -> 
     write_video_job(&job)?;
     let cancellation = Arc::new(AtomicBool::new(false));
     state.cancellations.lock().map_err(|_| "任务状态不可用")?.insert(id.clone(), cancellation.clone());
-    std::thread::spawn(move || run_video_job(id, request, portrait, audio, output, cancellation));
+    let processes = state.processes.clone();
+    std::thread::spawn(move || run_video_job(id, request, portrait, audio, output, cancellation, processes));
     Ok(job)
 }
 
@@ -1370,7 +1376,7 @@ pub fn run() {
     recover_interrupted_jobs();
     tauri::Builder::default()
         .manage(SpeechState { pid: Mutex::new(None) })
-        .manage(JobState { cancellations: Mutex::new(HashMap::new()) })
+        .manage(JobState { cancellations: Mutex::new(HashMap::new()), processes: Arc::new(Mutex::new(HashMap::new())) })
         .setup(|app| {
             sync_engine_runner(app.handle()).map_err(std::io::Error::other)?;
             sync_bundled_voice_previews(app.handle()).map_err(std::io::Error::other)?;
