@@ -1,0 +1,37 @@
+{
+  "id": "photo-audio-video-v1",
+  "title": "单照片与声音合成视频",
+  "status": "approved-for-implementation",
+  "date": "2026-08-24",
+  "goal": "在 VoxLocal 桌面端维护一张人物照片，将生成历史中的音频或用户导入的音频合成为本地 MP4，并为 Wav2Lip 口型同步保留可插拔引擎接口。",
+  "productRules": [
+    "口型视频是独立一级菜单，不干扰阅读、音色和音频历史。",
+    "当前只维护一张启用中的人物照片，用户可随时替换或删除。",
+    "音频可来自 VoxLocal 已完成的生成历史，也可从本机导入。",
+    "基础合成使用本机 ffmpeg 生成静态照片加完整声音的 MP4；Wav2Lip 是可选增强引擎。",
+    "Wav2Lip 官方代码及权重仅限个人、研究和非商业用途，安装或使用前必须展示许可提示。",
+    "视频任务展示准备、处理、封装、完成或失败状态，生成后可播放并在 Finder 中显示。",
+    "所有照片、音频、视频和任务记录仅保存在 VoxLocal 应用数据目录。"
+  ],
+  "states": ["missing-photo", "missing-audio", "ready", "queued", "running", "completed", "failed", "cancelled"],
+  "acceptanceCriteria": [
+    { "id": "AC-01", "given": "用户打开口型视频页", "when": "尚未维护照片", "then": "页面明确要求选择 JPG、JPEG 或 PNG，且不能开始生成" },
+    { "id": "AC-02", "given": "用户选择有效图片", "when": "保存完成", "then": "重新启动应用后仍显示同一张启用照片" },
+    { "id": "AC-03", "given": "存在已完成的主动生成音频", "when": "用户选择生成历史", "then": "可将该音频用于视频且不复制或重新生成语音" },
+    { "id": "AC-04", "given": "用户导入 WAV、MP3、M4A 或 AAC", "when": "文件通过大小和格式校验", "then": "可作为视频声音来源" },
+    { "id": "AC-05", "given": "照片和音频均已选择且 ffmpeg 可用", "when": "用户选择基础合成并开始", "then": "生成包含完整音频的 H.264/AAC MP4，进度最终到 100%" },
+    { "id": "AC-06", "given": "视频生成完成", "when": "用户点击播放或 Finder", "then": "应用内可播放，Finder 能定位到登记过的输出文件" },
+    { "id": "AC-07", "given": "Wav2Lip 未安装", "when": "用户切换到口型同步", "then": "生成按钮禁用，并显示非商用许可、缺少组件及本地安装位置" },
+    { "id": "AC-08", "given": "任何前端传入路径", "when": "读取、显示或生成", "then": "原生端只接受应用已登记资产，拒绝目录穿越和任意文件读取" }
+  ],
+  "nonGoals": ["多人或多脸跟踪", "实时摄像头口型", "云端上传", "头部姿态或眼神动画", "将 Wav2Lip 声称为可商用组件"],
+  "dependencies": [
+    { "name": "ffmpeg", "requiredFor": "基础合成与最终封装", "installMode": "用户环境探测" },
+    { "name": "Wav2Lip", "requiredFor": "可选口型同步", "license": "个人/研究/非商业" }
+  ],
+  "risks": [
+    "单张照片的 Wav2Lip 主要改变口部，头部与眼睛仍然静止。",
+    "官方 Wav2Lip 在 Apple Silicon 上没有原生 MPS 路径，可能回退 CPU，速度较慢。",
+    "长音频会产生较大 MP4，需要在界面展示输出大小并由用户管理。"
+  ]
+}

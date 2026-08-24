@@ -14,6 +14,25 @@
     "unidic-lite",
     "en_core_web_sm 3.8.0"
   ],
+  "videoResources": [
+    {
+      "id": "ffmpeg",
+      "purpose": "基础照片与完整音频合成为 H.264/AAC MP4",
+      "license": "LGPL/GPL，取决于用户安装的构建选项",
+      "required": true,
+      "downloadMode": "system-package",
+      "detectedPaths": ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+    },
+    {
+      "id": "wav2lip",
+      "source": "https://github.com/Rudrabha/Wav2Lip",
+      "purpose": "可选单照片口型同步",
+      "license": "仅个人、研究与非商业用途",
+      "required": false,
+      "downloadMode": "manual-with-license-acknowledgement",
+      "installRoot": "~/Library/Application Support/VoxLocal/video/wav2lip"
+    }
+  ],
   "models": [
     {
       "id": "qwen-custom",

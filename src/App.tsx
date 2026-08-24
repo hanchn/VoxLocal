@@ -8,6 +8,7 @@ import {
   Cpu,
   Download,
   FileText,
+  Film,
   GripVertical,
   Heart,
   History,
@@ -29,6 +30,7 @@ import { speakWithSystemVoice, stopSpeaking } from "./lib/speech";
 import { optimizeVoiceRecording } from "./lib/audioProcessing";
 import { importDocument } from "./lib/documentImport";
 import { cacheVoicePreview, cancelSynthesis, downloadPublicVoice, getDeviceProfile, getEngineStatus, getPublicVoiceAvailability, getSynthesisJob, listPersistedVoiceProfiles, listSynthesisJobs, listTrashedAudioJobs, listTrashVoiceProfiles, prepareEngine, purgeAudioTrash, purgeVoiceTrash, persistRecording, persistVoiceProfile, readCachedVoicePreview, readGeneratedAudio, renameGeneratedAudio, restoreTrashedAudio, restoreVoiceProfile, revealGeneratedAudio, startSynthesis, trashGeneratedAudio, trashVoiceProfile, type DeviceProfile, type EngineStatus, type SynthesisJob } from "./lib/synthesis";
+import { LipSyncView } from "./components/LipSyncView";
 import type { DocumentRecord, View, VoiceProfile } from "./types";
 
 const primaryPublicVoices: VoiceProfile[] = [
@@ -478,6 +480,7 @@ function App() {
           <NavButton active={view === "record"} icon={<Mic size={18} />} label="录制音色" onClick={() => setView("record")} />
           <NavButton active={view === "library"} icon={<Library size={18} />} label="文档库" onClick={() => setView("library")} />
           <NavButton active={view === "history"} icon={<History size={18} />} label="生成历史" onClick={() => setView("history")} />
+          <NavButton active={view === "video"} icon={<Film size={18} />} label="口型视频" onClick={() => setView("video")} />
           <NavButton active={view === "trash"} icon={<Trash2 size={18} />} label={`回收站${trashedVoices.length + trashedAudioJobs.length ? ` (${trashedVoices.length + trashedAudioJobs.length})` : ""}`} onClick={() => setView("trash")} />
         </nav>
         <button className="refresh-app-button" disabled={isRefreshing} onClick={() => void refreshAppState()}><RefreshCw className={isRefreshing ? "spin" : ""} size={16} /><span>{isRefreshing ? "正在刷新" : "刷新状态"}</span></button>
@@ -504,6 +507,7 @@ function App() {
         {view === "record" && <VoiceRecorder onComplete={addVoice} />}
         {view === "library" && <LibraryView documents={[...documents, ...sampleDocuments]} onOpen={openDocument} onDiscard={discardDocument} onImport={() => importInputRef.current?.click()} onCreate={createDocument} />}
         {view === "history" && <HistoryView jobs={synthesisJobs} voices={allVoices} onReveal={showInFinder} onRename={renameHistoryAudio} onTrash={trashHistoryAudio} />}
+        {view === "video" && <LipSyncView audioJobs={synthesisJobs} onNotice={setNotice} />}
         {view === "trash" && <TrashView voices={trashedVoices} audioJobs={trashedAudioJobs} onRestoreVoice={restoreTrashedVoice} onRestoreAudio={restoreHistoryAudio} onEmpty={emptyTrash} />}
       </main>
 

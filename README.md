@@ -8,6 +8,7 @@ VoxLocal 是一个 macOS 优先、完全本地的文档朗读与声音克隆工�
 
 - [产品介绍与使用场景](PRODUCT.md)
 - [系统架构与数据流](ARCHITECTURE.md)
+- [2026-08-24 产品与技术决策](docs/PRODUCT_DECISIONS_2026-08-24.md)
 - [开发、调试与发布指南](DEVELOPMENT.md)
 - [模型和音色资源清单](resources/catalog.json)
 - [第三方模型与许可证说明](THIRD_PARTY_NOTICES.md)
@@ -30,6 +31,7 @@ VoxLocal 是一个 macOS 优先、完全本地的文档朗读与声音克隆工�
 - Apple Silicon 使用 MLX Qwen3-TTS 克隆声音，模型和录音不会上传
 - 根据统一内存自动选择模型、分片长度和公共音色并发数
 - Codex 插件与标准 MCP 工具，可供 Codex、WorkBuddy 及其他 MCP 客户端调用
+- 独立“口型视频”工作台：维护一张人物照片，复用生成历史或导入音频，生成基础 MP4，并预留可替换的 Wav2Lip 适配器
 
 ## 设备策略
 

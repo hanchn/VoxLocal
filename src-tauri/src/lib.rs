@@ -79,6 +79,54 @@ struct PublicVoiceRequest {
     speaker: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PortraitAsset {
+    path: String,
+    file_name: String,
+    updated_at: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportedAudioAsset {
+    path: String,
+    file_name: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VideoEngineStatus {
+    ffmpeg_ready: bool,
+    wav2lip_ready: bool,
+    wav2lip_root: Option<String>,
+    message: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VideoJob {
+    id: String,
+    title: String,
+    engine: String,
+    created_at: String,
+    status: String,
+    stage: String,
+    progress: u8,
+    output_path: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct VideoRequest {
+    title: String,
+    engine: String,
+    portrait_path: String,
+    audio_path: String,
+    synthesis_job_id: Option<String>,
+}
+
 fn app_root() -> Result<PathBuf, String> {
     let home = std::env::var_os("HOME").ok_or("无法确定用户目录")?;
     Ok(PathBuf::from(home).join("Library/Application Support/VoxLocal"))
@@ -94,6 +142,56 @@ fn exports_root() -> Result<PathBuf, String> {
     let path = app_root()?.join("exports");
     fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     Ok(path)
+}
+
+fn video_root() -> Result<PathBuf, String> {
+    let path = app_root()?.join("video");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn video_jobs_root() -> Result<PathBuf, String> {
+    let path = video_root()?.join("jobs");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn video_exports_root() -> Result<PathBuf, String> {
+    let path = video_root()?.join("exports");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn video_imports_root() -> Result<PathBuf, String> {
+    let path = video_root()?.join("audio-imports");
+    fs::create_dir_all(&path).map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn portrait_metadata_path() -> Result<PathBuf, String> { Ok(video_root()?.join("portrait.json")) }
+fn video_job_path(id: &str) -> Result<PathBuf, String> { Ok(video_jobs_root()?.join(format!("{id}.json"))) }
+
+fn write_video_job(job: &VideoJob) -> Result<(), String> {
+    fs::write(video_job_path(&job.id)?, serde_json::to_vec_pretty(job).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+}
+
+fn update_video_job(id: &str, mutate: impl FnOnce(&mut VideoJob)) -> Result<VideoJob, String> {
+    let path = video_job_path(id)?;
+    let mut job: VideoJob = serde_json::from_slice(&fs::read(path).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    mutate(&mut job);
+    write_video_job(&job)?;
+    Ok(job)
+}
+
+fn find_ffmpeg() -> Option<PathBuf> {
+    ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"].iter().map(PathBuf::from).find(|path| path.is_file()).or_else(|| {
+        std::env::var_os("PATH").and_then(|paths| std::env::split_paths(&paths).map(|path| path.join("ffmpeg")).find(|path| path.is_file()))
+    })
+}
+
+fn wav2lip_paths() -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let root = video_root()?.join("wav2lip");
+    Ok((root.clone(), root.join("checkpoints/wav2lip_gan.pth"), root.join("face_detection/detection/sfd/s3fd.pth")))
 }
 
 fn voice_previews_root() -> Result<PathBuf, String> {
@@ -841,6 +939,166 @@ fn reveal_audio_file(path: String) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err("无法在 Finder 中显示文件".into()) }
 }
 
+#[tauri::command]
+fn video_engine_status() -> Result<VideoEngineStatus, String> {
+    let ffmpeg_ready = find_ffmpeg().is_some();
+    let (root, checkpoint, detector) = wav2lip_paths()?;
+    let wav2lip_ready = ffmpeg_ready && root.join("inference.py").is_file() && checkpoint.is_file() && detector.is_file() && runtime_python()?.is_file();
+    let message = if !ffmpeg_ready {
+        "缺少 ffmpeg，请先安装视频组件".into()
+    } else if !wav2lip_ready {
+        "基础合成可用；Wav2Lip 口型组件待安装".into()
+    } else {
+        "基础合成与 Wav2Lip 均可用".into()
+    };
+    Ok(VideoEngineStatus { ffmpeg_ready, wav2lip_ready, wav2lip_root: Some(root.to_string_lossy().into_owned()), message })
+}
+
+#[tauri::command]
+fn get_video_portrait() -> Result<Option<PortraitAsset>, String> {
+    let metadata = portrait_metadata_path()?;
+    if !metadata.is_file() { return Ok(None); }
+    let asset: PortraitAsset = serde_json::from_slice(&fs::read(metadata).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    if Path::new(&asset.path).is_file() { Ok(Some(asset)) } else { Ok(None) }
+}
+
+fn image_extension_and_validity(file_name: &str, bytes: &[u8]) -> Result<&'static str, String> {
+    if bytes.len() > 20 * 1024 * 1024 { return Err("人物照片不能超过 20MB".into()); }
+    let extension = Path::new(file_name).extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    let is_png = bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]);
+    let is_jpeg = bytes.starts_with(&[0xff, 0xd8, 0xff]);
+    match (extension.as_str(), is_png, is_jpeg) {
+        ("png", true, _) => Ok("png"),
+        ("jpg" | "jpeg", _, true) => Ok("jpg"),
+        _ => Err("请选择真实的 JPG、JPEG 或 PNG 图片".into()),
+    }
+}
+
+#[tauri::command]
+fn persist_video_portrait(file_name: String, bytes: Vec<u8>) -> Result<PortraitAsset, String> {
+    let extension = image_extension_and_validity(&file_name, &bytes)?;
+    if let Some(previous) = get_video_portrait()? { let _ = fs::remove_file(previous.path); }
+    let path = video_root()?.join(format!("portrait.{extension}"));
+    fs::write(&path, bytes).map_err(|error| error.to_string())?;
+    let asset = PortraitAsset { path: path.to_string_lossy().into_owned(), file_name: safe_stem(Path::new(&file_name).file_stem().and_then(|value| value.to_str()).unwrap_or("portrait")) + "." + extension, updated_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()) };
+    fs::write(portrait_metadata_path()?, serde_json::to_vec_pretty(&asset).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
+    Ok(asset)
+}
+
+#[tauri::command]
+fn delete_video_portrait() -> Result<(), String> {
+    if let Some(asset) = get_video_portrait()? { let _ = fs::remove_file(asset.path); }
+    let _ = fs::remove_file(portrait_metadata_path()?);
+    Ok(())
+}
+
+#[tauri::command]
+fn persist_video_audio(file_name: String, bytes: Vec<u8>) -> Result<ImportedAudioAsset, String> {
+    if bytes.is_empty() || bytes.len() > 100 * 1024 * 1024 { return Err("音频必须小于 100MB".into()); }
+    let extension = Path::new(&file_name).extension().and_then(|value| value.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !matches!(extension.as_str(), "wav" | "mp3" | "m4a" | "aac") { return Err("仅支持 WAV、MP3、M4A 或 AAC 音频".into()); }
+    let valid = match extension.as_str() {
+        "wav" => bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE"),
+        "mp3" => bytes.starts_with(b"ID3") || bytes.starts_with(&[0xff, 0xfb]) || bytes.starts_with(&[0xff, 0xf3]) || bytes.starts_with(&[0xff, 0xf2]),
+        "m4a" => bytes.get(4..8) == Some(b"ftyp"),
+        "aac" => bytes.starts_with(&[0xff, 0xf1]) || bytes.starts_with(&[0xff, 0xf9]),
+        _ => false,
+    };
+    if !valid { return Err("音频扩展名与实际内容不一致".into()); }
+    let target = video_imports_root()?.join(format!("{}-{}.{}", safe_stem(Path::new(&file_name).file_stem().and_then(|value| value.to_str()).unwrap_or("audio")), Uuid::new_v4(), extension));
+    fs::write(&target, bytes).map_err(|error| error.to_string())?;
+    Ok(ImportedAudioAsset { path: target.to_string_lossy().into_owned(), file_name })
+}
+
+fn registered_video_audio(request: &VideoRequest) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(&request.audio_path).canonicalize().map_err(|error| error.to_string())?;
+    let imported = video_imports_root()?.canonicalize().map_err(|error| error.to_string())?;
+    if candidate.starts_with(imported) { return Ok(candidate); }
+    let id = request.synthesis_job_id.as_ref().ok_or("音频不是已登记的 VoxLocal 资源")?;
+    let job = get_synthesis_job(id.clone())?;
+    let registered = job.output_path.ok_or("历史音频尚未完成")?;
+    let registered = PathBuf::from(registered).canonicalize().map_err(|error| error.to_string())?;
+    if registered == candidate { Ok(candidate) } else { Err("音频路径与历史记录不匹配".into()) }
+}
+
+fn registered_portrait(path: &str) -> Result<PathBuf, String> {
+    let active = get_video_portrait()?.ok_or("请先维护人物照片")?;
+    let active = PathBuf::from(active.path).canonicalize().map_err(|error| error.to_string())?;
+    let candidate = PathBuf::from(path).canonicalize().map_err(|error| error.to_string())?;
+    if active == candidate { Ok(candidate) } else { Err("只能使用当前维护的人物照片".into()) }
+}
+
+fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio: PathBuf, output: PathBuf) {
+    let result = (|| -> Result<(), String> {
+        update_video_job(&job_id, |job| { job.status = "running".into(); job.stage = "准备本地素材".into(); job.progress = 10; })?;
+        let ffmpeg = find_ffmpeg().ok_or("缺少 ffmpeg，请先安装视频组件")?;
+        update_video_job(&job_id, |job| { job.stage = if request.engine == "wav2lip" { "正在进行口型同步".into() } else { "正在合成画面与声音".into() }; job.progress = 35; })?;
+        let result = if request.engine == "wav2lip" {
+            let (root, checkpoint, detector) = wav2lip_paths()?;
+            if !root.join("inference.py").is_file() || !checkpoint.is_file() || !detector.is_file() { return Err("Wav2Lip 组件尚未安装；官方权重仅限个人、研究与非商业用途".into()); }
+            let mut command = Command::new(runtime_python()?);
+            command.current_dir(&root).arg("inference.py").arg("--checkpoint_path").arg(checkpoint).arg("--face").arg(&portrait).arg("--audio").arg(&audio).arg("--outfile").arg(&output).arg("--fps").arg("25");
+            if let Some(parent) = ffmpeg.parent() { command.env("PATH", format!("{}:{}", parent.to_string_lossy(), std::env::var("PATH").unwrap_or_default())); }
+            command.output()
+        } else {
+            Command::new(ffmpeg).args(["-y", "-loop", "1", "-framerate", "25", "-i"]).arg(&portrait).arg("-i").arg(&audio).args(["-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2:color=black", "-c:v", "libx264", "-tune", "stillimage", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", "-movflags", "+faststart"]).arg(&output).output()
+        }.map_err(|error| error.to_string())?;
+        if !result.status.success() { return Err(String::from_utf8_lossy(&result.stderr).lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")); }
+        if !output.is_file() || fs::metadata(&output).map_err(|error| error.to_string())?.len() < 1024 { return Err("视频输出无效".into()); }
+        update_video_job(&job_id, |job| { job.status = "completed".into(); job.stage = "生成完成".into(); job.progress = 100; job.output_path = Some(output.to_string_lossy().into_owned()); })?;
+        Ok(())
+    })();
+    if let Err(error) = result { let _ = fs::remove_file(output); let _ = update_video_job(&job_id, |job| { job.status = "failed".into(); job.stage = "生成失败".into(); job.error = Some(error); }); }
+}
+
+#[tauri::command]
+fn start_video_job(request: VideoRequest) -> Result<VideoJob, String> {
+    if !matches!(request.engine.as_str(), "still" | "wav2lip") { return Err("不支持的视频引擎".into()); }
+    let portrait = registered_portrait(&request.portrait_path)?;
+    let audio = registered_video_audio(&request)?;
+    let id = Uuid::new_v4().to_string();
+    let title = safe_stem(&request.title);
+    let output = video_exports_root()?.join(format!("{}-{}.mp4", title, &id[..8]));
+    let job = VideoJob { id: id.clone(), title, engine: request.engine.clone(), created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()), status: "queued".into(), stage: "等待处理".into(), progress: 0, output_path: None, error: None };
+    write_video_job(&job)?;
+    std::thread::spawn(move || run_video_job(id, request, portrait, audio, output));
+    Ok(job)
+}
+
+#[tauri::command]
+fn get_video_job(job_id: String) -> Result<VideoJob, String> {
+    if !job_id.chars().all(|character| character.is_ascii_alphanumeric() || character == '-') { return Err("视频任务标识无效".into()); }
+    serde_json::from_slice(&fs::read(video_job_path(&job_id)?).map_err(|error| error.to_string())?).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn list_video_jobs() -> Result<Vec<VideoJob>, String> {
+    let mut jobs = fs::read_dir(video_jobs_root()?).map_err(|error| error.to_string())?.flatten().filter_map(|entry| fs::read(entry.path()).ok()).filter_map(|data| serde_json::from_slice(&data).ok()).collect::<Vec<VideoJob>>();
+    jobs.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    Ok(jobs)
+}
+
+#[tauri::command]
+fn read_video_asset(path: String, kind: String) -> Result<Vec<u8>, String> {
+    let candidate = PathBuf::from(path).canonicalize().map_err(|error| error.to_string())?;
+    let registered = if kind == "portrait" {
+        get_video_portrait()?.and_then(|asset| PathBuf::from(asset.path).canonicalize().ok()).is_some_and(|path| path == candidate)
+    } else if kind == "output" {
+        list_video_jobs()?.into_iter().filter_map(|job| job.output_path).filter_map(|path| PathBuf::from(path).canonicalize().ok()).any(|path| path == candidate)
+    } else { false };
+    if !registered { return Err("只能读取 VoxLocal 已登记的视频素材".into()); }
+    fs::read(candidate).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn reveal_video_file(path: String) -> Result<(), String> {
+    let candidate = PathBuf::from(path).canonicalize().map_err(|error| error.to_string())?;
+    let registered = list_video_jobs()?.into_iter().filter_map(|job| job.output_path).filter_map(|path| PathBuf::from(path).canonicalize().ok()).any(|path| path == candidate);
+    if !registered { return Err("只能显示 VoxLocal 已登记的视频".into()); }
+    let status = Command::new("/usr/bin/open").arg("-R").arg(candidate).status().map_err(|error| error.to_string())?;
+    if status.success() { Ok(()) } else { Err("无法在 Finder 中显示视频".into()) }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     recover_interrupted_jobs();
@@ -855,6 +1113,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             speak_text, stop_speech, device_profile, engine_status, prepare_ai_engine, public_voice_availability, download_public_voice,
             persist_voice_recording, delete_voice_recording, persist_voice_profile, list_voice_profiles, trash_voice_profile, list_trash_voice_profiles, restore_voice_profile, purge_voice_trash, start_synthesis, get_synthesis_job, list_synthesis_jobs, rename_generated_audio, trash_generated_audio, list_trashed_audio_jobs, restore_trashed_audio, purge_audio_trash, cancel_synthesis_job, read_audio_file, read_voice_preview_cache, cache_voice_preview, reveal_audio_file
+            , video_engine_status, get_video_portrait, persist_video_portrait, delete_video_portrait, persist_video_audio, start_video_job, get_video_job, list_video_jobs, read_video_asset, reveal_video_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running VoxLocal");

@@ -1,4 +1,4 @@
-export type View = "reader" | "voices" | "record" | "library" | "history" | "trash";
+export type View = "reader" | "voices" | "record" | "library" | "history" | "video" | "trash";
 
 export type VoiceKind = "system" | "open" | "user";
 
