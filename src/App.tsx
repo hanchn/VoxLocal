@@ -355,6 +355,18 @@ function App() {
     }
   }
 
+  async function quickTestNarration(sentence: string): Promise<SynthesisJob> {
+    if (selectedVoice.kind === "system") throw new Error("快速测试需要先选择一个本地音色");
+    let status = engine ?? await getEngineStatus();
+    if (!status.ready) { setNotice("正在准备本地语音引擎…"); status = await prepareEngine(); setEngine(status); }
+    const started = await startSynthesis({ text: sentence, title: "一句话快速测试", voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, language: speechLanguage === "en" ? "English" : speechLanguage === "ja" ? "Japanese" : "Chinese" });
+    setSynthesisJobs((jobs) => [started, ...jobs.filter((job) => job.id !== started.id)]);
+    let current = started;
+    while (current.status === "queued" || current.status === "running") { await new Promise((resolve) => window.setTimeout(resolve, 500)); current = await getSynthesisJob(current.id); setSynthesisJobs((jobs) => [current, ...jobs.filter((job) => job.id !== current.id)]); }
+    if (current.status !== "completed" || !current.outputPath) throw new Error(current.error || "快速测试语音生成失败");
+    return current;
+  }
+
   async function cancelNarration() {
     if (!synthesisJob) return;
     await cancelSynthesis(synthesisJob.id);
@@ -531,7 +543,7 @@ function App() {
         {view === "record" && <VoiceRecorder onComplete={addVoice} />}
         {view === "library" && <LibraryView documents={[...documents, ...sampleDocuments]} onOpen={openDocument} onDiscard={discardDocument} onImport={() => importInputRef.current?.click()} onCreate={createDocument} />}
         {view === "history" && <HistoryView jobs={synthesisJobs} voices={allVoices} onReveal={showInFinder} onRename={renameHistoryAudio} onTrash={trashHistoryAudio} />}
-        {view === "video" && <LipSyncView audioJobs={synthesisJobs} onNotice={setNotice} />}
+        {view === "video" && <LipSyncView audioJobs={synthesisJobs} selectedVoice={selectedVoice} onQuickTest={quickTestNarration} onNotice={setNotice} />}
         {view === "ppt" && <PptVideoView audioJobs={synthesisJobs} onNotice={setNotice} />}
         {view === "trash" && <TrashView voices={trashedVoices} audioJobs={trashedAudioJobs} onRestoreVoice={restoreTrashedVoice} onRestoreAudio={restoreHistoryAudio} onEmpty={emptyTrash} />}
       </main>

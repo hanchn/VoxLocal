@@ -1,16 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, FileAudio, Film, FolderOpen, ImagePlus, Play, ShieldAlert, Trash2, Upload, WandSparkles } from "lucide-react";
 import type { SynthesisJob } from "../lib/synthesis";
+import type { VoiceProfile } from "../types";
 import { deleteVideoJob, getBackground, getPortrait, getVideoEngineStatus, getVideoJob, importVideoAudio, listVideoJobs, readBackground, readPortrait, readVideo, removeBackground, removePortrait, revealVideo, saveBackground, savePortrait, startVideo, type BackgroundAsset, type ImportedAudioAsset, type PortraitAsset, type VideoAudioMode, type VideoCanvas, type VideoEngine, type VideoEngineStatus, type VideoJob } from "../lib/video";
 const defaultPortraitUrl = "/default-portraits/default-character-study.png";
 const defaultBackgroundUrl = "/default-backgrounds/default-study-room.png";
 
 interface Props {
   audioJobs: SynthesisJob[];
+  selectedVoice: VoiceProfile;
+  onQuickTest: (sentence: string) => Promise<SynthesisJob>;
   onNotice: (message: string) => void;
 }
 
-export function LipSyncView({ audioJobs, onNotice }: Props) {
+export function LipSyncView({ audioJobs, selectedVoice, onQuickTest, onNotice }: Props) {
   const [portrait, setPortrait] = useState<PortraitAsset | null>(null);
   const [portraitUrl, setPortraitUrl] = useState<string | null>(null);
   const [backgroundAsset, setBackgroundAsset] = useState<BackgroundAsset | null>(null);
@@ -29,6 +32,8 @@ export function LipSyncView({ audioJobs, onNotice }: Props) {
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [pendingDelete, setPendingDelete] = useState<VideoJob | null>(null);
   const [playingUrl, setPlayingUrl] = useState<string | null>(null);
+  const [quickSentence, setQuickSentence] = useState("你好，这是 VoxLocal 的一句话口型测试。 ");
+  const [quickBusy, setQuickBusy] = useState(false);
   const portraitInput = useRef<HTMLInputElement>(null);
   const audioInput = useRef<HTMLInputElement>(null);
   const backgroundInput = useRef<HTMLInputElement>(null);
@@ -105,6 +110,20 @@ export function LipSyncView({ audioJobs, onNotice }: Props) {
     } catch (error) { onNotice(error instanceof Error ? error.message : typeof error === "string" ? error : "视频生成失败"); }
   }
 
+  async function quickTest() {
+    if (!portrait || !quickSentence.trim() || quickBusy) return;
+    setQuickBusy(true);
+    try {
+      const audio = await onQuickTest(quickSentence.trim());
+      let job = await startVideo({ title: "一句话快速测试", engine: "wav2lip", portraitPath: portrait.path, audioPath: audio.outputPath!, synthesisJobId: audio.id, backgroundEnabled: false, canvas, audioMode });
+      setCurrentJob(job); setJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]);
+      while (job.status === "queued" || job.status === "running") { await new Promise((resolve) => window.setTimeout(resolve, 600)); job = await getVideoJob(job.id); setCurrentJob(job); setJobs((items) => [job, ...items.filter((item) => item.id !== job.id)]); }
+      if (job.status === "failed") throw new Error(job.error || "快速测试视频生成失败");
+      onNotice("一句话快速测试已完成");
+    } catch (error) { onNotice(error instanceof Error ? error.message : typeof error === "string" ? error : "快速测试失败"); }
+    finally { setQuickBusy(false); }
+  }
+
   async function play(job: VideoJob) {
     if (!job.outputPath) return;
     try { if (playingUrl) URL.revokeObjectURL(playingUrl); setPlayingUrl(URL.createObjectURL(await readVideo(job.outputPath))); }
@@ -133,6 +152,7 @@ export function LipSyncView({ audioJobs, onNotice }: Props) {
         {portrait && <div className="asset-row"><span><Check size={15}/> {portrait.fileName}</span><button onClick={deletePortrait}><Trash2 size={14}/>删除</button></div>}
         <input ref={portraitInput} className="hidden-file-input" type="file" accept="image/jpeg,image/png" onChange={(event) => { void choosePortrait(event.target.files?.[0]); event.currentTarget.value = ""; }}/>
 
+        <div className="quick-test-card"><div><strong>一句话快速测试</strong><small>使用当前音色生成短音频并直接做口型视频，不需要先建文档。</small></div><textarea value={quickSentence} maxLength={120} onChange={(event) => setQuickSentence(event.target.value)} /><button type="button" className="quick-test-button" disabled={!portrait || !quickSentence.trim() || quickBusy || !engineStatus?.wav2lipReady} onClick={() => void quickTest()}>{quickBusy ? "正在测试…" : `用 ${selectedVoice.name} 生成测试`}</button></div>
         <div className="video-step-title"><span>2</span><div><h2>声音来源</h2><p>声音生成与视频合成互相独立</p></div></div>
         <div className="video-tabs"><button className={audioSource === "history" ? "active" : ""} onClick={() => setAudioSource("history")}>生成历史</button><button className={audioSource === "import" ? "active" : ""} onClick={() => setAudioSource("import")}>本地导入</button></div>
         {audioSource === "history" ? <select value={selectedJobId} onChange={(event) => setSelectedJobId(event.target.value)}><option value="">选择已完成音频</option>{completedAudio.map((job) => <option key={job.id} value={job.id}>{job.voiceId} · {job.createdAt}</option>)}</select> : <button className="audio-import" onClick={() => audioInput.current?.click()}><Upload size={17}/>{importedAudio?.fileName ?? "选择 WAV / MP3 / M4A / AAC"}</button>}
