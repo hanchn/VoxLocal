@@ -1212,9 +1212,28 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
             // from an interrupted/failed run before starting the next job.
             let _ = fs::remove_file(root.join("temp/result.avi"));
             let mut command = Command::new(runtime_python()?);
-            command.current_dir(&root).arg("inference.py").arg("--checkpoint_path").arg(checkpoint).arg("--face").arg(&portrait).arg("--audio").arg(&audio).arg("--outfile").arg(&output).arg("--fps").arg("25");
+            command.current_dir(&root).arg("inference.py").arg("--checkpoint_path").arg(checkpoint).arg("--face").arg(&portrait).arg("--audio").arg(&audio).arg("--outfile").arg(&output).arg("--fps").arg("25").stdout(Stdio::piped()).stderr(Stdio::piped());
             if let Some(parent) = ffmpeg.parent() { command.env("PATH", format!("{}:{}", parent.to_string_lossy(), std::env::var("PATH").unwrap_or_default())); }
-            command.output()
+            let mut child = command.spawn().map_err(|error| error.to_string())?;
+            let stderr = child.stderr.take().ok_or("无法读取 Wav2Lip 进度")?;
+            let mut stderr_text = String::new();
+            let mut last_progress = 35u8;
+            for line in BufReader::new(stderr).lines().flatten() {
+                if let Some(percent_end) = line.find('%') {
+                    let digits = line[..percent_end].rsplit(|character: char| !character.is_ascii_digit()).next().unwrap_or("");
+                    if let Ok(percent) = digits.parse::<u8>() {
+                        let progress = 35 + percent.saturating_mul(50) / 100;
+                        if progress > last_progress {
+                            last_progress = progress;
+                            let _ = update_video_job(&job_id, |job| { job.stage = format!("正在进行口型同步（{}%）", percent); job.progress = progress; });
+                        }
+                    }
+                }
+                stderr_text.push_str(&line);
+                stderr_text.push('\n');
+            }
+            let status = child.wait().map_err(|error| error.to_string())?;
+            Ok(std::process::Output { status, stdout: Vec::new(), stderr: stderr_text.into_bytes() })
         } else {
             let size = format!("{width}x{height}");
             let filter = if request.background_enabled && request.background_path.is_some() {
