@@ -1261,7 +1261,7 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
 #[tauri::command]
 fn start_video_job(request: VideoRequest) -> Result<VideoJob, String> {
     if !matches!(request.engine.as_str(), "still" | "wav2lip") { return Err("不支持的视频引擎".into()); }
-    if !matches!(request.canvas.as_str(), "landscape" | "square" | "portrait" | "circle") { return Err("不支持的视频画布".into()); }
+    if !matches!(request.canvas.as_str(), "source" | "landscape" | "square" | "portrait" | "circle") { return Err("不支持的视频画布".into()); }
     if !matches!(request.audio_mode.as_str(), "with-audio" | "video-only") { return Err("不支持的导出模式".into()); }
     let portrait = registered_portrait(&request.portrait_path)?;
     if request.engine == "still" && request.background_enabled && request.background_path.is_none() { return Err("请先选择背景图片，或关闭背景开关".into()); }
