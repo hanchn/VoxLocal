@@ -139,7 +139,7 @@ export function LipSyncView({ audioJobs, onNotice }: Props) {
         <input ref={audioInput} className="hidden-file-input" type="file" accept="audio/wav,audio/mpeg,audio/mp4,audio/aac" onChange={(event) => { void chooseAudio(event.target.files?.[0]); event.currentTarget.value = ""; }}/>
 
         <div className="video-step-title"><span>3</span><div><h2>合成方式</h2><p>可替换引擎，不改变照片和音频</p></div></div>
-        <div className="engine-options"><button className={engine === "still" ? "active" : ""} onClick={() => setEngine("still")}><Film/><span><strong>基础合成</strong><small>静态照片 + 完整声音</small></span><em>{engineStatus?.ffmpegReady ? "可用" : "缺少 ffmpeg"}</em></button><button className={engine === "wav2lip" ? "active" : ""} onClick={() => setEngine("wav2lip")}><WandSparkles/><span><strong>Wav2Lip 口型同步</strong><small>嘴型跟随声音，单照片模式</small></span><em>{engineStatus?.wav2lipReady ? "可用" : "待安装"}</em></button></div>
+        <div className="engine-options"><button className="active" type="button"><WandSparkles/><span><strong>Wav2Lip 口型同步</strong><small>嘴型跟随声音，单照片模式</small></span><em>{engineStatus?.wav2lipReady ? "可用" : "待安装"}</em></button></div>
         {engine === "wav2lip" && <div className="license-note"><ShieldAlert size={17}/><span><strong>仅个人、研究与非商业用途</strong><small>官方 Wav2Lip 权重受 LRS2 数据许可限制；商业产品请切换为已获商业许可的引擎。</small></span></div>}
         <div className="video-step-title"><span>4</span><div><h2>画面与导出</h2><p>选择背景、画布比例，以及是否保留声音</p></div></div>
         <div className="background-heading"><label className="video-field-label">背景图片</label><label className="background-toggle"><input type="checkbox" checked={backgroundEnabled} onChange={(event) => setBackgroundEnabled(event.target.checked)} />启用背景</label></div>
