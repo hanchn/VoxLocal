@@ -94,6 +94,7 @@ export async function getVideoJob(jobId: string): Promise<VideoJob> {
   desktopOnly();
   return invoke<VideoJob>("get_video_job", { jobId });
 }
+export async function cancelVideoJob(jobId: string): Promise<void> { desktopOnly(); return invoke("cancel_video_job", { jobId }); }
 
 export async function listVideoJobs(): Promise<VideoJob[]> {
   if (!inTauri()) return [];

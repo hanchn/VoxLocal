@@ -1193,8 +1193,9 @@ fn start_ppt_video_job(request: PptVideoRequest) -> Result<VideoJob, String> {
     Ok(job)
 }
 
-fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio: PathBuf, output: PathBuf) {
+fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio: PathBuf, output: PathBuf, cancellation: Arc<AtomicBool>) {
     let result = (|| -> Result<(), String> {
+        if cancellation.load(Ordering::Relaxed) { return Err("__cancelled__".into()); }
         update_video_job(&job_id, |job| { job.status = "running".into(); job.stage = "准备本地素材".into(); job.progress = 10; })?;
         let ffmpeg = find_ffmpeg().ok_or("缺少 ffmpeg，请先安装视频组件")?;
         let (width, height) = match request.canvas.as_str() {
@@ -1252,6 +1253,7 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
             if audio_enabled { command.args(["-c:a", "aac", "-b:a", "192k"]); } else { command.arg("-an"); }
             command.args(["-shortest", "-movflags", "+faststart"]).arg(&output).output()
         }.map_err(|error| error.to_string())?;
+        if cancellation.load(Ordering::Relaxed) { return Err("__cancelled__".into()); }
         if !result.status.success() { return Err(String::from_utf8_lossy(&result.stderr).lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n")); }
         if !output.is_file() || fs::metadata(&output).map_err(|error| error.to_string())?.len() < 1024 { return Err("视频输出无效".into()); }
         if request.engine == "wav2lip" && request.background_enabled {
@@ -1271,14 +1273,15 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
             if !strip.status.success() { return Err("导出纯视频失败".into()); }
             fs::rename(&silent, &output).map_err(|error| error.to_string())?;
         }
+        if cancellation.load(Ordering::Relaxed) { return Err("__cancelled__".into()); }
         update_video_job(&job_id, |job| { job.status = "completed".into(); job.stage = "生成完成".into(); job.progress = 100; job.output_path = Some(output.to_string_lossy().into_owned()); })?;
         Ok(())
     })();
-    if let Err(error) = result { let _ = fs::remove_file(output); let _ = update_video_job(&job_id, |job| { job.status = "failed".into(); job.stage = "生成失败".into(); job.error = Some(error); }); }
+    if let Err(error) = result { let _ = fs::remove_file(&output); let _ = update_video_job(&job_id, |job| { if error == "__cancelled__" { job.status = "cancelled".into(); job.stage = "已取消".into(); job.progress = 0; } else { job.status = "failed".into(); job.stage = "生成失败".into(); job.error = Some(error); } }); }
 }
 
 #[tauri::command]
-fn start_video_job(request: VideoRequest) -> Result<VideoJob, String> {
+fn start_video_job(request: VideoRequest, state: tauri::State<'_, JobState>) -> Result<VideoJob, String> {
     if !matches!(request.engine.as_str(), "still" | "wav2lip") { return Err("不支持的视频引擎".into()); }
     if !matches!(request.canvas.as_str(), "source" | "landscape" | "square" | "portrait" | "circle") { return Err("不支持的视频画布".into()); }
     if !matches!(request.audio_mode.as_str(), "with-audio" | "video-only") { return Err("不支持的导出模式".into()); }
@@ -1291,8 +1294,18 @@ fn start_video_job(request: VideoRequest) -> Result<VideoJob, String> {
     let output = video_exports_root()?.join(format!("{}-{}.mp4", title, &id[..8]));
     let job = VideoJob { id: id.clone(), title, engine: request.engine.clone(), created_at: format!("{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs()), status: "queued".into(), stage: "等待处理".into(), progress: 0, output_path: None, error: None };
     write_video_job(&job)?;
-    std::thread::spawn(move || run_video_job(id, request, portrait, audio, output));
+    let cancellation = Arc::new(AtomicBool::new(false));
+    state.cancellations.lock().map_err(|_| "任务状态不可用")?.insert(id.clone(), cancellation.clone());
+    std::thread::spawn(move || run_video_job(id, request, portrait, audio, output, cancellation));
     Ok(job)
+}
+
+#[tauri::command]
+fn cancel_video_job(job_id: String, state: tauri::State<'_, JobState>) -> Result<(), String> {
+    validated_job_id(&job_id)?;
+    if let Some(flag) = state.cancellations.lock().map_err(|_| "任务状态不可用")?.get(&job_id) { flag.store(true, Ordering::Relaxed); }
+    let _ = update_video_job(&job_id, |job| { if job.status == "queued" || job.status == "running" { job.status = "cancelled".into(); job.stage = "正在取消".into(); } });
+    Ok(())
 }
 
 #[tauri::command]
@@ -1366,7 +1379,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             speak_text, stop_speech, device_profile, engine_status, prepare_ai_engine, public_voice_availability, download_public_voice,
             persist_voice_recording, delete_voice_recording, persist_voice_profile, list_voice_profiles, trash_voice_profile, list_trash_voice_profiles, restore_voice_profile, purge_voice_trash, start_synthesis, get_synthesis_job, list_synthesis_jobs, rename_generated_audio, trash_generated_audio, list_trashed_audio_jobs, restore_trashed_audio, purge_audio_trash, cancel_synthesis_job, read_audio_file, read_voice_preview_cache, cache_voice_preview, reveal_audio_file
-            , video_engine_status, get_video_portrait, persist_video_portrait, delete_video_portrait, get_video_background, persist_video_background, delete_video_background, persist_video_audio, persist_ppt_slides, start_video_job, start_ppt_video_job, get_video_job, list_video_jobs, delete_video_job, read_video_asset, reveal_video_file
+            , video_engine_status, get_video_portrait, persist_video_portrait, delete_video_portrait, get_video_background, persist_video_background, delete_video_background, persist_video_audio, persist_ppt_slides, start_video_job, cancel_video_job, start_ppt_video_job, get_video_job, list_video_jobs, delete_video_job, read_video_asset, reveal_video_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running VoxLocal");

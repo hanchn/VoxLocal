@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, FileAudio, Film, FolderOpen, ImagePlus, Play, ShieldAlert, Trash2, Upload, WandSparkles } from "lucide-react";
 import type { SynthesisJob } from "../lib/synthesis";
 import type { VoiceProfile } from "../types";
-import { deleteVideoJob, getBackground, getPortrait, getVideoEngineStatus, getVideoJob, importVideoAudio, listVideoJobs, readBackground, readPortrait, readVideo, removeBackground, removePortrait, revealVideo, saveBackground, savePortrait, startVideo, type BackgroundAsset, type ImportedAudioAsset, type PortraitAsset, type VideoAudioMode, type VideoCanvas, type VideoEngine, type VideoEngineStatus, type VideoJob } from "../lib/video";
+import { cancelVideoJob, deleteVideoJob, getBackground, getPortrait, getVideoEngineStatus, getVideoJob, importVideoAudio, listVideoJobs, readBackground, readPortrait, readVideo, removeBackground, removePortrait, revealVideo, saveBackground, savePortrait, startVideo, type BackgroundAsset, type ImportedAudioAsset, type PortraitAsset, type VideoAudioMode, type VideoCanvas, type VideoEngine, type VideoEngineStatus, type VideoJob } from "../lib/video";
 const defaultPortraitUrl = "/default-portraits/default-character-study.png";
 const defaultBackgroundUrl = "/default-backgrounds/default-study-room.png";
 
@@ -130,6 +130,12 @@ export function LipSyncView({ audioJobs, selectedVoice, onQuickTest, onNotice }:
     catch (error) { onNotice(error instanceof Error ? error.message : "视频无法打开"); }
   }
 
+  async function cancelCurrentJob() {
+    if (!currentJob || (currentJob.status !== "queued" && currentJob.status !== "running")) return;
+    try { await cancelVideoJob(currentJob.id); const cancelled = await getVideoJob(currentJob.id); setCurrentJob(cancelled); setJobs((items) => [cancelled, ...items.filter((item) => item.id !== cancelled.id)]); onNotice("视频任务已终止"); }
+    catch (error) { onNotice(error instanceof Error ? error.message : typeof error === "string" ? error : "视频任务终止失败"); }
+  }
+
   async function removeJob(job: VideoJob) {
     setPendingDelete(job);
   }
@@ -168,7 +174,7 @@ export function LipSyncView({ audioJobs, selectedVoice, onQuickTest, onNotice }:
         <small className="video-hint">关闭“启用背景”后不叠加背景图片；MP4 将使用画布底色。</small>
         <div className="video-option-grid"><label><span>画布形状</span><select value={canvas} onChange={(event) => setCanvas(event.target.value as VideoCanvas)}><option value="source">跟随人物原图</option><option value="landscape">横屏 16:9</option><option value="square">方形 1:1</option><option value="portrait">竖屏 9:16</option><option value="circle">圆形头像</option></select></label><label><span>导出内容</span><select value={audioMode} onChange={(event) => setAudioMode(event.target.value as VideoAudioMode)}><option value="with-audio">视频 + 语音</option><option value="video-only">纯视频（无声音）</option></select></label></div>
         <button className="generate-button video-generate" disabled={!portrait || !audioReady || !engineReady || currentJob?.status === "running" || currentJob?.status === "queued"} onClick={() => void generate()}><WandSparkles size={17}/>{!engineReady ? engineStatus?.message ?? "组件未就绪" : "生成视频"}</button>
-        {currentJob && <div className={`job-progress ${currentJob.status}`}><div><span>{currentJob.stage}</span><strong>{currentJob.progress}%</strong></div><div className="progress-track"><span style={{ width: `${currentJob.progress}%` }}/></div>{currentJob.error && <p>{currentJob.error}</p>}</div>}
+        {currentJob && <div className={`job-progress ${currentJob.status}`}><div><span>{currentJob.stage}</span><strong>{currentJob.progress}%</strong>{(currentJob.status === "queued" || currentJob.status === "running") && <button type="button" className="job-cancel-button" onClick={() => void cancelCurrentJob()}>终止任务</button>}</div><div className="progress-track"><span style={{ width: `${currentJob.progress}%` }}/></div>{currentJob.error && <p>{currentJob.error}</p>}</div>}
       </div>
 
       <div className="video-preview-card"><div className="section-title"><h2>视频预览</h2><span>{jobs.filter((job) => job.status === "completed").length} 个成品</span></div>{playingUrl ? <video key={playingUrl} controls autoPlay src={playingUrl}/> : <div className="video-empty"><Film size={42}/><strong>完成后在这里播放</strong><p>视频文件不会上传到网络</p></div>}<div className="video-history-heading"><h3>口型视频生成记录</h3><span>{jobs.length} 个任务</span></div><div className="video-history">{jobs.length ? jobs.map((job) => <div className="video-history-row" key={job.id}><FileAudio size={18}/><span><strong>{job.title}</strong><small>{job.engine === "wav2lip" ? "Wav2Lip 口型同步" : "基础照片视频"} · {job.status === "completed" ? "已完成" : job.status === "failed" ? "失败" : job.status === "running" ? `${job.progress}%` : "排队中"}</small></span>{job.status === "completed" && job.outputPath && <><button type="button" onClick={() => void play(job)}><Play size={14}/>播放</button><button type="button" onClick={() => void revealVideo(job.outputPath!)}><FolderOpen size={14}/>Finder</button></>}<button type="button" className="video-delete-button" onClick={(event) => { event.stopPropagation(); void removeJob(job); }}><Trash2 size={14}/>删除</button></div>) : <p className="video-history-empty">还没有生成过口型视频</p>}</div></div>
