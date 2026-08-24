@@ -138,6 +138,7 @@ function App() {
   const [synthesisJobs, setSynthesisJobs] = useState<SynthesisJob[]>([]);
   const [trashedVoices, setTrashedVoices] = useState<VoiceProfile[]>([]);
   const [trashedAudioJobs, setTrashedAudioJobs] = useState<SynthesisJob[]>([]);
+  const [pendingAudioTrash, setPendingAudioTrash] = useState<SynthesisJob | null>(null);
   const [generatedAudioUrl, setGeneratedAudioUrl] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -440,7 +441,13 @@ function App() {
   }
 
   async function trashHistoryAudio(job: SynthesisJob) {
-    if (!window.confirm("确定将这个历史音频移入回收站吗？")) return;
+    setPendingAudioTrash(job);
+  }
+
+  async function confirmTrashHistoryAudio() {
+    const job = pendingAudioTrash;
+    if (!job) return;
+    setPendingAudioTrash(null);
     try {
       const trashed = await trashGeneratedAudio(job.id);
       setSynthesisJobs((jobs) => jobs.filter((item) => item.id !== job.id));
@@ -448,7 +455,7 @@ function App() {
       if (synthesisJob?.id === job.id) { setSynthesisJob(null); setGeneratedAudioUrl(null); }
       setNotice("历史音频已移入回收站");
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : "无法移入回收站");
+      setNotice(error instanceof Error ? error.message : typeof error === "string" ? error : "无法移入回收站");
     }
   }
 
@@ -549,6 +556,7 @@ function App() {
       </main>
 
       {notice && <div className="toast" onClick={() => setNotice(null)}><Sparkles size={16} />{notice}</div>}
+      {pendingAudioTrash && <div className="delete-confirm-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingAudioTrash(null); }}><div className="delete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="delete-audio-title"><h3 id="delete-audio-title">确认删除历史音频？</h3><p>音频会先移入回收站，之后仍可恢复。</p><div><button type="button" onClick={() => setPendingAudioTrash(null)}>取消</button><button type="button" className="danger" onClick={() => void confirmTrashHistoryAudio()}>确认删除</button></div></div></div>}
       <input ref={importInputRef} className="hidden-file-input" type="file" accept=".txt,.md,.markdown,.pdf,.docx,.epub" onChange={(event) => { void handleDocument(event.target.files?.[0]); event.currentTarget.value = ""; }} />
     </div>
   );
