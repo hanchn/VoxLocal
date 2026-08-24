@@ -1208,6 +1208,9 @@ fn run_video_job(job_id: String, request: VideoRequest, portrait: PathBuf, audio
         let result = if request.engine == "wav2lip" {
             let (root, checkpoint, detector) = wav2lip_paths()?;
             if !root.join("inference.py").is_file() || !checkpoint.is_file() || !detector.is_file() { return Err("Wav2Lip 组件尚未安装；官方权重仅限个人、研究与非商业用途".into()); }
+            // Wav2Lip writes a fixed intermediate AVI path. Remove stale output
+            // from an interrupted/failed run before starting the next job.
+            let _ = fs::remove_file(root.join("temp/result.avi"));
             let mut command = Command::new(runtime_python()?);
             command.current_dir(&root).arg("inference.py").arg("--checkpoint_path").arg(checkpoint).arg("--face").arg(&portrait).arg("--audio").arg(&audio).arg("--outfile").arg(&output).arg("--fps").arg("25");
             if let Some(parent) = ffmpeg.parent() { command.env("PATH", format!("{}:{}", parent.to_string_lossy(), std::env::var("PATH").unwrap_or_default())); }
