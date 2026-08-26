@@ -616,7 +616,7 @@ fn split_text(text: &str, limit: usize) -> Vec<String> {
     if cleaned.is_empty() { return vec![]; }
     let mut chunks = Vec::new();
     let mut current = String::new();
-    for sentence in cleaned.split_inclusive(|character| matches!(character, '。' | '！' | '？' | '；' | '\n' | '.' | '!' | '?')) {
+    for sentence in cleaned.split_inclusive(|character| matches!(character, '。' | '！' | '？' | '；' | '，' | '、' | '：' | '\n' | '.' | '!' | '?' | ',' | ':' | ';')) {
         if current.chars().count() + sentence.chars().count() > limit && !current.trim().is_empty() {
             chunks.push(current.trim().to_owned());
             current.clear();
@@ -643,19 +643,16 @@ fn concat_wav(parts: &[PathBuf], output: &Path) -> Result<(), String> {
     let spec = reader.spec();
     drop(reader);
     let mut joined: Vec<i16> = Vec::new();
-    let crossfade_samples = ((spec.sample_rate as f32 * 0.02).round() as usize * spec.channels as usize).max(spec.channels as usize);
+    // Keep a short, deterministic pause between independently synthesized
+    // chunks. Crossfading removed boundary phonemes and made long narration
+    // sound rushed or discontinuous.
+    let pause_samples = ((spec.sample_rate as f32 * 0.12).round() as usize * spec.channels as usize).max(spec.channels as usize);
     for part in parts {
         let mut reader = hound::WavReader::open(part).map_err(|error| error.to_string())?;
         if reader.spec() != spec { return Err("音频分片格式不一致".into()); }
         let samples: Vec<i16> = reader.samples::<i16>().collect::<Result<_, _>>().map_err(|error| error.to_string())?;
-        if joined.is_empty() { joined.extend(samples); continue; }
-        let overlap = crossfade_samples.min(joined.len()).min(samples.len());
-        let start = joined.len() - overlap;
-        for index in 0..overlap {
-            let ratio = (index + 1) as f32 / (overlap + 1) as f32;
-            joined[start + index] = (joined[start + index] as f32 * (1.0 - ratio) + samples[index] as f32 * ratio).round().clamp(i16::MIN as f32, i16::MAX as f32) as i16;
-        }
-        joined.extend_from_slice(&samples[overlap..]);
+        if !joined.is_empty() { joined.extend(std::iter::repeat(0i16).take(pause_samples)); }
+        joined.extend_from_slice(&samples);
     }
     let mut writer = hound::WavWriter::create(output, spec).map_err(|error| error.to_string())?;
     for sample in joined { writer.write_sample(sample).map_err(|error| error.to_string())?; }
