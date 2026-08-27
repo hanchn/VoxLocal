@@ -135,6 +135,11 @@ def main() -> int:
                     ref_audio=request.get("reference_audio"),
                     ref_text=request.get("reference_text") or None,
                 )
+                # Keep cloned-voice chunks stylistically consistent.  Without
+                # an instruction the model may choose a different speaking
+                # rate for every independent chunk of a long narration.
+                if request.get("instruct"):
+                    generation["instruct"] = request["instruct"]
             results = list(model.generate(**generation))
             if not results:
                 raise RuntimeError("模型没有返回音频")

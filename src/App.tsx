@@ -333,7 +333,7 @@ function App() {
       }
       if (generatedAudioUrl) URL.revokeObjectURL(generatedAudioUrl);
       setGeneratedAudioUrl(null);
-      const started = await startSynthesis({ text, title: documentTitle, voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, language: speechLanguage === "en" ? "English" : speechLanguage === "ja" ? "Japanese" : "Chinese" });
+      const started = await startSynthesis({ text, title: documentTitle, voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, instruct: "请保持自然、稳定、连贯的中文口播语速，段落之间不要忽快忽慢。", language: speechLanguage === "en" ? "English" : speechLanguage === "ja" ? "Japanese" : "Chinese" });
       setSynthesisJob(started);
       setSynthesisJobs((jobs) => [started, ...jobs.filter((job) => job.id !== started.id)]);
       let current = started;
@@ -360,7 +360,7 @@ function App() {
     if (selectedVoice.kind === "system") throw new Error("快速测试需要先选择一个本地音色");
     let status = engine ?? await getEngineStatus();
     if (!status.ready) { setNotice("正在准备本地语音引擎…"); status = await prepareEngine(); setEngine(status); }
-    const started = await startSynthesis({ text: sentence, title: "一句话快速测试", voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, language: speechLanguage === "en" ? "English" : speechLanguage === "ja" ? "Japanese" : "Chinese" });
+    const started = await startSynthesis({ text: sentence, title: "一句话快速测试", voiceId: selectedVoice.id, rate, referencePath: selectedVoice.recordingPath, referenceText: selectedVoice.referenceText, speaker: selectedVoice.speaker, instruct: "请保持自然、稳定、连贯的中文口播语速。", language: speechLanguage === "en" ? "English" : speechLanguage === "ja" ? "Japanese" : "Chinese" });
     setSynthesisJobs((jobs) => [started, ...jobs.filter((job) => job.id !== started.id)]);
     let current = started;
     while (current.status === "queued" || current.status === "running") { await new Promise((resolve) => window.setTimeout(resolve, 500)); current = await getSynthesisJob(current.id); setSynthesisJobs((jobs) => [current, ...jobs.filter((job) => job.id !== current.id)]); }
